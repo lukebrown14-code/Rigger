@@ -213,6 +213,25 @@ def test_filings_detected_from_sec_edgar_source(tmp_engine):
     assert [item.id for item in evidence(tmp_engine, kind="news")] == ["news:n1"]
 
 
+def test_asx_announcements_are_primary_filings(tmp_engine):
+    with Session(tmp_engine) as session:
+        session.add(
+            NewsItemTable(
+                id="asx-1",
+                instrument_ids=to_json([INST]),
+                published=datetime(2026, 3, 21, tzinfo=UTC),
+                title="Price sensitive announcement",
+                url="https://example.com/asx-1",
+                source="asx_announcements",
+            )
+        )
+        session.commit()
+
+    item = evidence(tmp_engine, kind="filing")[0]
+    assert item.id == "filing:asx-1"
+    assert item.quality == "primary"
+
+
 def test_cite_is_deterministic_and_omits_url(tmp_engine):
     _seed(tmp_engine)
     by_id = {item.id: item for item in evidence(tmp_engine)}

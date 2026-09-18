@@ -28,11 +28,13 @@ class TickerTarget(TargetPlugin):
         self.tags: frozenset[str] = frozenset()
         self.notes = ""
         self.overrides: dict[str, dict[str, Any]] = {}
+        self.market_currency = ""
 
     def configure(self, cfg: dict[str, Any]) -> None:
         self.name = str(cfg.get("name", self.name))
         self.label = str(cfg.get("label", self.name))
         self.market = str(cfg.get("market", "")).lower()
+        self.market_currency = str(cfg.get("market_currency", self.market_currency))
         self.tickers = [str(t).upper() for t in cfg.get("tickers", [])]
         self.asset_class = cfg.get("asset_class", "equity")
         self.sector = cfg.get("sector")
@@ -45,7 +47,7 @@ class TickerTarget(TargetPlugin):
     def instruments(self) -> list[Instrument]:
         if not self.market:
             raise ValueError(f"target {self.name!r} must set market")
-        currency = {"us": "USD", "asx": "AUD"}.get(self.market, "AUD")
+        currency = self.market_currency or {"us": "USD", "asx": "AUD"}.get(self.market, "AUD")
         result = []
         for symbol in self.tickers:
             override = self.overrides.get(symbol, {})

@@ -43,6 +43,10 @@ class Config(RiggerScreen):
         ("r", "refresh", "refresh"),
         ("l", "focus_plugins", "plugins"),
         ("t", "focus_targets", "targets"),
+        ("s", "configure_source", "source"),
+        ("a", "add_market", "market"),
+        ("e", "edit_market", "edit market"),
+        ("x", "remove_market", "remove market"),
         ("escape", "close_diagnostics", "back"),
     ]
 
@@ -61,9 +65,10 @@ class Config(RiggerScreen):
     #cfg-provider-row Static, #cfg-provider-actions Static { width: auto; }
     #cfg-provider-name { text-style: bold; }
     #cfg-provider-status, #cfg-provider-also { color: $text-muted; padding: 0 0 0 1; }
-    #cfg-routing-pane, #cfg-plugins-pane { height: auto; }
+    #cfg-routing-pane, #cfg-plugins-pane, #cfg-sources-pane { height: auto; }
     #cfg-routing, #cfg-plugins { height: auto; max-height: 12; }
-    #cfg-routing-more, #cfg-routing-empty, #cfg-plugins-empty { height: 1; padding: 0 1; color: $text-muted; }
+    #cfg-sources, #cfg-markets { height: auto; max-height: 4; }
+    #cfg-routing-more, #cfg-routing-empty, #cfg-plugins-empty, #cfg-sources-hint { height: 1; padding: 0 1; color: $text-muted; }
     #cfg-routing-more { display: none; }
     #cfg-targets-pane { height: 1fr; }
     #cfg-targets { height: auto; max-height: 12; }
@@ -146,6 +151,15 @@ class Config(RiggerScreen):
                     yield RiggerTable(id="cfg-plugins", show_header=False)
                     yield Static("no plugins discovered", id="cfg-plugins-empty", markup=False)
                 with Pane(
+                    title="data sources & markets",
+                    key="s",
+                    hints=hint_markup(("s", "configure source"), ("a/e/x", "market")),
+                    id="cfg-sources-pane",
+                ):
+                    yield RiggerTable(id="cfg-sources")
+                    yield RiggerTable(id="cfg-markets")
+                    yield Static("s configure source · a add · e edit · x remove market", id="cfg-sources-hint", markup=False)
+                with Pane(
                     title="targets",
                     key="t",
                     hints=hint_markup(("1", "watchlist")),
@@ -189,6 +203,8 @@ class Config(RiggerScreen):
         self.query_one("#costs-table", RiggerTable).add_columns("Task", "Model", "Calls", "USD")
         self.query_one("#cfg-routing", RiggerTable).add_columns("Task", "Model")
         self.query_one("#cfg-plugins", RiggerTable).add_columns("", "Plugin", "State")
+        self.query_one("#cfg-sources", RiggerTable).add_columns("Source", "Quality", "Status")
+        self.query_one("#cfg-markets", RiggerTable).add_columns("ID", "Market", "Currency", "Yahoo")
         self.query_one("#cfg-targets", RiggerTable).add_columns("Name", "Kind", "Market", "Tickers")
         self.ready = True
         await self.refresh_view()
@@ -241,6 +257,8 @@ class Config(RiggerScreen):
         self._refresh_provider()
         self._refresh_routing()
         self._refresh_plugins()
+        self._refresh_sources()
+        self._refresh_markets()
         self._refresh_targets()
         self._refresh_diagnostics()
         self.call_after_refresh(self._update_routing_more)
@@ -310,6 +328,93 @@ class Config(RiggerScreen):
         self.query_one("#cfg-plugins-pane", Pane).set_badge(
             f"{ok} of {len(plugins)} ok" if plugins else ""
         )
+
+    def _refresh_sources(self) -> None:
+        table = self.query_one("#cfg-sources", RiggerTable)
+        table.clear()
+        sources = services.data_provider_status(self.rig)
+        for source in sources:
+            table.add_row(
+                source.label,
+                "primary" if source.primary_disclosure else "secondary",
+                "ready" if source.configured and source.enabled else "needs setup",
+                key=source.name,
+            )
+        table.display = bool(sources)
+
+    def _refresh_markets(self) -> None:
+        table = self.query_one("#cfg-markets", RiggerTable)
+        table.clear()
+        for name, profile in sorted(getattr(self.rig.cfg, "markets", {}).items()):
+            table.add_row(name, profile.label, profile.currency, profile.yahoo_suffix or "—", key=name)
+
+    def _selected_market(self) -> str | None:
+        table = self.query_one("#cfg-markets", RiggerTable)
+        if table.cursor_row is None or table.row_count == 0:
+            return None
+        row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+        return str(row_key.value) if row_key is not None else None
+
+    async def action_configure_source(self) -> None:
+        from rigger.tui.screens.source_setup import configure_source
+
+        table = self.query_one("#cfg-sources", RiggerTable)
+        if table.cursor_row is None or table.row_count == 0:
+            self.notify("select a data source first", severity="warning")
+            return
+        row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key
+        if row_key is not None:
+            await configure_source(self.app, self.rig, str(row_key.value), self.refresh_view)
+
+    async def action_add_market(self) -> None:
+        from rigger.tui.screens.market_setup import MarketSetupModal
+
+        values = await self.app.push_screen_wait(MarketSetupModal())
+        if values is not None:
+            await self._save_market(values)
+
+    async def action_edit_market(self) -> None:
+        from rigger.tui.screens.market_setup import MarketSetupModal
+
+        name = self._selected_market()
+        if name is None:
+            self.notify("select a market first", severity="warning")
+            return
+        profile = self.rig.cfg.markets[name]
+        values = await self.app.push_screen_wait(
+            MarketSetupModal(
+                {"id": name, "label": profile.label, "currency": profile.currency, "yahoo_suffix": profile.yahoo_suffix},
+                editable_id=False,
+            )
+        )
+        if values is not None:
+            await self._save_market(values)
+
+    async def _save_market(self, values: dict[str, str]) -> None:
+        try:
+            services.save_market(**values)
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        reload_markets = getattr(self.rig, "reload_markets", None)
+        if callable(reload_markets):
+            reload_markets()
+        await self.refresh_view()
+
+    async def action_remove_market(self) -> None:
+        name = self._selected_market()
+        if name is None:
+            self.notify("select a market first", severity="warning")
+            return
+        try:
+            services.remove_market(name)
+        except ValueError as exc:
+            self.notify(str(exc), severity="error")
+            return
+        reload_markets = getattr(self.rig, "reload_markets", None)
+        if callable(reload_markets):
+            reload_markets()
+        await self.refresh_view()
 
     def _refresh_targets(self) -> None:
         table = self.query_one("#cfg-targets", RiggerTable)

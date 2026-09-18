@@ -42,6 +42,28 @@ class Scope:
         return [inst for inst in instruments if self.matches(inst)]
 
 
+@dataclass(frozen=True)
+class DataProviderField:
+    """One setting an adapter safely exposes to the source-setup UI."""
+
+    name: str
+    label: str
+    required: bool = False
+    secret: bool = False
+    env_var: str = ""
+    placeholder: str = ""
+
+
+@dataclass(frozen=True)
+class DataProviderSpec:
+    """An adapter-owned setup contract, not a generic HTTP connector."""
+
+    label: str
+    fields: tuple[DataProviderField, ...] = ()
+    primary_disclosure: bool = False
+    notice: str = ""
+
+
 def _freeze(values: Any) -> frozenset[str] | None:
     if values is None:
         return None
@@ -113,6 +135,7 @@ class MarketPlugin(Plugin):
 class DataPlugin(Plugin):
     market: str | None = None  # None = works for any market
     scope: Scope = Scope()
+    provider_spec: DataProviderSpec | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)

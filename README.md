@@ -121,6 +121,14 @@ tests/               pytest, fully offline (respx + a fake LLM)
 
 Plugins are discovered through the `rigger.plugins` and `rigger.targets` entry-point groups in `pyproject.toml`. A new data source is one file implementing one class.
 
+### Configuring data sources
+
+Press `c` for Settings, select a source in **data sources**, then press `d` to configure it. Source adapters declare the settings they accept; ordinary settings are saved in `config.toml`, while declared API-key fields are saved only in `.env` and are masked in the UI. Rigger deliberately does not offer a generic authenticated-HTTP connector: a commercial source such as Financial Times needs a dedicated adapter built against its licensed API contract, pagination rules and content-use rights.
+
+### Adding an exchange
+
+Press `c`, then `a` in Settings to add an exchange-level market. Enter its ID, currency and Yahoo suffix (for example, `lse`, `GBP`, `.L`). Yahoo Finance prices/calendar data and RSS work for every configured market; country-specific disclosure plugins are enabled separately and can be assigned to selected markets in their source setup form.
+
 ## Develop
 
 ```bash

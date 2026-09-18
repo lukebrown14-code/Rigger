@@ -27,6 +27,20 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
 
 
+class MarketConfig(BaseModel):
+    """One exchange a user can select for targets and Yahoo-backed data."""
+
+    label: str
+    currency: str
+    yahoo_suffix: str = ""
+
+
+DEFAULT_MARKETS = {
+    "us": MarketConfig(label="United States", currency="USD"),
+    "asx": MarketConfig(label="Australian Securities Exchange", currency="AUD", yahoo_suffix=".AX"),
+}
+
+
 class AppConfig(BaseModel):
     """The merged view of config.toml (loaded lazily)."""
 
@@ -42,6 +56,7 @@ class AppConfig(BaseModel):
     llm_base_url: str = ""
     llm_api_key_env: str = ""
     plugins: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    markets: dict[str, MarketConfig] = Field(default_factory=lambda: dict(DEFAULT_MARKETS))
 
 
 def load_toml(path: Path = CONFIG_PATH) -> dict[str, Any]:
@@ -90,6 +105,14 @@ def build_config(raw: dict[str, Any] | None = None) -> AppConfig:
     cfg.llm_api_key_env = llm.get("api_key_env", cfg.llm_api_key_env)
 
     cfg.plugins = raw.get("plugins", {})
+    configured_markets = raw.get("markets", {})
+    cfg.markets = {
+        **DEFAULT_MARKETS,
+        **{
+            str(name).lower(): MarketConfig.model_validate(values)
+            for name, values in configured_markets.items()
+        },
+    }
     return cfg
 
 

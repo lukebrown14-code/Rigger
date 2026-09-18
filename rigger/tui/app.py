@@ -15,6 +15,7 @@ from rigger.runtime import Rigger
 from rigger.tui.screens.chat import Chat
 from rigger.tui.screens.config import Config
 from rigger.tui.screens.data import Data
+from rigger.tui.screens.decisions import Decisions
 from rigger.tui.screens.help import HelpScreen
 from rigger.tui.screens.home import Home
 from rigger.tui.screens.model_picker import ModelPicker
@@ -110,6 +111,7 @@ class RiggerApp(App):
         ),
         Binding("4", "switch_screen('theses')", "Theses", tooltip="Track claims and evidence"),
         Binding("5", "switch_screen('chat')", "Ask", tooltip="Grounded Q&A over evidence"),
+        Binding("6", "switch_screen('decisions')", "Decisions", tooltip="Record and review decision context"),
         Binding(
             "c",
             "switch_screen('config')",
@@ -156,6 +158,7 @@ class RiggerApp(App):
             "config": Config(self.rig),
             "reports": Reports(self.rig, research_state),
             "theses": Theses(self.rig),
+            "decisions": Decisions(self.rig, research_state),
             "chat": Chat(self.rig),
             "targets": Targets(self.rig),
         }

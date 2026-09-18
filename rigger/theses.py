@@ -246,6 +246,8 @@ def update_thesis(
     if status not in STATUSES:
         raise ValueError(f"status must be one of {', '.join(STATUSES)}; got {status!r}")
     _ensure_tables(engine)
+    renamed = False
+    old_id = id
     with Session(engine) as session:
         row = session.get(ThesisTable, id)
         if row is None:
@@ -285,11 +287,19 @@ def update_thesis(
             session.delete(row)
             row = ThesisTable(id=new_id, created_at=row.created_at, **values)
             session.add(row)
+            renamed = True
         else:
             for column, value in values.items():
                 setattr(row, column, value)
         session.commit()
-        return _thesis_from_row(row)
+        thesis = _thesis_from_row(row)
+    if renamed:
+        # Keep optional decision-journal links current while retaining each
+        # decision's original claim snapshot for its historical rationale.
+        from rigger.decisions import relink_thesis
+
+        relink_thesis(engine, old_id, thesis.id, thesis.claim)
+    return thesis
 
 
 def add_evidence(

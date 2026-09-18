@@ -15,6 +15,7 @@ from rigger.core.plugin import (
 )
 from rigger.llm.client import LLMClient, build_client
 from rigger.llm.providers import PROVIDERS
+from rigger.plugins.data.yfinance import YFinanceSymbols
 from rigger.plugins.targets.tickers import (
     CompanyTarget,
     IndustryTarget,
@@ -42,6 +43,7 @@ class Rigger:
 
         self.plugins = discover_plugins()
         apply_config(self.plugins, self.cfg.plugins)
+        self._apply_market_profiles()
 
         for market_name, tickers in self.cfg.universe.items():
             market_plugin = self.plugins.get(market_name)
@@ -91,6 +93,25 @@ class Rigger:
         """
         self.settings, self.cfg = config_mod.load_config()
         self.llm = self._build_llm()
+
+    def reload_data_sources(self) -> None:
+        """Re-read source configuration without disturbing the LLM client."""
+        self.settings, self.cfg = config_mod.load_config()
+        apply_config(self.plugins, self.cfg.plugins)
+        self._apply_market_profiles()
+
+    def reload_markets(self) -> None:
+        """Re-read exchange definitions and rebuild targets using their currency profiles."""
+        self.settings, self.cfg = config_mod.load_config()
+        apply_config(self.plugins, self.cfg.plugins)
+        self._apply_market_profiles()
+        self.targets = self._build_targets()
+
+    def _apply_market_profiles(self) -> None:
+        suffixes = {name: profile.yahoo_suffix for name, profile in self.cfg.markets.items()}
+        for plugin in self.plugins.values():
+            if isinstance(plugin, YFinanceSymbols):
+                plugin.set_market_suffixes(suffixes)
 
     def universe(self) -> list[Instrument]:
         merged: dict[str, Instrument] = {}
@@ -146,7 +167,16 @@ class Rigger:
                     f"target {name!r} names unknown kind {kind_name!r}; known kinds are {available}"
                 )
             instance = kind_cls()
-            instance.configure({"name": name, "label": spec.get("label", name), **spec})
+            market_name = str(spec.get("market", "")).lower()
+            profile = self.cfg.markets.get(market_name)
+            instance.configure(
+                {
+                    "name": name,
+                    "label": spec.get("label", name),
+                    "market_currency": profile.currency if profile else "",
+                    **spec,
+                }
+            )
             market = getattr(instance, "market", None)
             if market is not None and market not in self.known_markets():
                 known = ", ".join(self.known_markets()) or "none"
@@ -158,9 +188,8 @@ class Rigger:
         return targets
 
     def known_markets(self) -> list[str]:
-        return sorted(
-            {name for name, plugin in self.plugins.items() if isinstance(plugin, MarketPlugin)}
-        )
+        plugin_markets = {name for name, plugin in self.plugins.items() if isinstance(plugin, MarketPlugin)}
+        return sorted(plugin_markets | set(self.cfg.markets))
 
     def context(self, universe: list[Instrument] | None = None) -> Context:
         return Context(

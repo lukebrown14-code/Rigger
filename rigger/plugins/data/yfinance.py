@@ -39,6 +39,10 @@ class YFinanceSymbols(DataPlugin):
     def configure(self, cfg: dict[str, Any]) -> None:
         self.suffixes.update(cfg.get("suffixes", {}))
 
+    def set_market_suffixes(self, suffixes: dict[str, str]) -> None:
+        """Apply config-backed exchange profiles after plugin configuration."""
+        self.suffixes.update(suffixes)
+
     def yf_symbol(self, inst: Instrument) -> str:
         return yf_symbol(inst, self.suffixes)
 

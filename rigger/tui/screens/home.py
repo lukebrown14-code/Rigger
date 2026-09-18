@@ -34,7 +34,7 @@ from textual.markup import escape
 from textual.message import Message
 from textual.widgets import DataTable, OptionList, Static
 
-from rigger import services
+from rigger import decisions, review, services
 from rigger.core.models import Instrument
 from rigger.core.state import read_last_seen
 from rigger.core.time import to_utc
@@ -385,6 +385,7 @@ class Home(RiggerScreen):
     Home #since-axis { margin-bottom: 1; color: $text-muted; }
     Home #since-newest { margin-bottom: 1; }
     Home #since-stale { height: 1; text-wrap: nowrap; text-overflow: ellipsis; }
+    Home #since-review { height: 1; color: $warning; text-wrap: nowrap; text-overflow: ellipsis; }
 
     /* upcoming / theses */
     Home #upcoming-table, Home #theses-table { height: 1fr; overflow-x: hidden; }
@@ -487,6 +488,7 @@ class Home(RiggerScreen):
                             yield Static("", classes="since-left")
                             yield Static("", classes="since-right", markup=False)
                         yield Static("", id="since-stale")
+                        yield Static("", id="since-review", markup=False)
             with PaneRow(id="home-mid"):
                 with Pane(
                     title="upcoming",
@@ -693,6 +695,7 @@ class Home(RiggerScreen):
 
         await self._refresh_watchlist(watched, closes)
         self._refresh_since(watched, pulse, stale)
+        self._refresh_review([instrument.id for _target, instrument in watched])
         self._refresh_upcoming(watched, events)
         self._refresh_theses(fleet)
         self._refresh_go()
@@ -820,6 +823,24 @@ class Home(RiggerScreen):
             if stale
             else "[$text-muted]✓ bars and reports fresh · all plugins on[/]"
         )
+
+    def _refresh_review(self, instrument_ids: list[str]) -> None:
+        """Expose evidence and journal prompts without making an investment call."""
+        line = self.query_one("#since-review", Static)
+        try:
+            prompts = review.review_queue(
+                self.rig, instrument_ids=instrument_ids, since=self.last_seen
+            )
+            due = decisions.due_reviews(self.rig.engine)
+        except Exception:
+            line.update("")
+            return
+        if due:
+            line.update(f"⚠ {len(due)} decision review{'s' if len(due) != 1 else ''} due · 6 decisions")
+        elif prompts:
+            line.update(f"⚠ {len(prompts)} evidence prompt{'s' if len(prompts) != 1 else ''} · 2 evidence")
+        else:
+            line.update("✓ no decision or evidence reviews due")
 
     def _refresh_upcoming(
         self, watched: list[tuple[str, Instrument]], events: list[services.Upcoming]

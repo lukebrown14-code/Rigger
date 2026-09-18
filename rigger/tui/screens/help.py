@@ -118,6 +118,13 @@ You accept or reject each piece yourself. The model only ever *suggests*; it
 never decides what counts, and the health badge is calculated from what you
 accepted, not from an opinion.
 
+## 6. Keep a decision journal
+
+Press **6** for Decisions. Record your rationale, valuation or price context,
+time horizon, review date, and what would invalidate the idea. Later reviews
+are appended to the original entry, so you can see what you knew at the time.
+This is a journal for your process, not a buy or sell recommendation.
+
 ---
 
 ## Worth knowing

@@ -132,6 +132,27 @@ def test_add_target_unknown_market(tmp_path, monkeypatch):
         services.add_target("bogus", market="asz", tickers=["X"])
 
 
+def test_save_custom_market_then_add_target_and_prevent_referenced_removal(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.toml").write_text("", encoding="utf-8")
+    services.save_market("lse", label="London Stock Exchange", currency="GBP", yahoo_suffix=".L")
+    assert services.market_profiles()["lse"].currency == "GBP"
+    services.add_target("hargreaves", market="lse", tickers=["HL"])
+    with pytest.raises(ValueError, match="hargreaves"):
+        services.remove_market("lse")
+    services.remove_target("hargreaves")
+    services.remove_market("lse")
+    assert "lse" not in services.market_profiles()
+
+
+def test_save_market_validates_identity_and_currency(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="market ID"):
+        services.save_market("LSE!", label="London", currency="GBP", yahoo_suffix=".L")
+    with pytest.raises(ValueError, match="three-letter"):
+        services.save_market("lse", label="London", currency="GB", yahoo_suffix=".L")
+
+
 def test_add_target_unknown_kind(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config.toml").write_text("", encoding="utf-8")

@@ -91,6 +91,16 @@ class TargetAddModal(Dialog):
         self._suffixes = DEFAULT_SUFFIXES | getattr(self.rig.cfg, "plugins", {}).get(
             "yfinance", {}
         ).get("suffixes", {})
+        self._suffixes.update(
+            {
+                name: profile.yahoo_suffix
+                for name, profile in getattr(self.rig.cfg, "markets", {}).items()
+            }
+        )
+
+    def _currency(self, market: str) -> str:
+        profile = getattr(self.rig.cfg, "markets", {}).get(market.lower())
+        return profile.currency if profile else ""
 
     def compose_dialog(self) -> ComposeResult:
         fields = []
@@ -145,7 +155,7 @@ class TargetAddModal(Dialog):
                                 id=f"{market.upper()}:{symbol}",
                                 market=market,
                                 symbol=symbol,
-                                currency={"us": "USD", "asx": "AUD"}.get(market, ""),
+                                currency=self._currency(market),
                                 asset_class=getattr(target, "asset_class", "equity"),
                             )
                         )
@@ -486,7 +496,9 @@ class Targets(RiggerScreen):
                         id=ident,
                         market=market,
                         symbol=symbol,
-                        currency={"us": "USD", "asx": "AUD"}.get(market, ""),
+                        currency=getattr(self.rig.cfg, "markets", {}).get(market).currency
+                        if market in getattr(self.rig.cfg, "markets", {})
+                        else "",
                         asset_class=getattr(target, "asset_class", "equity"),
                     )
                     if ident in known:

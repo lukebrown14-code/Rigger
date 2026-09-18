@@ -9,6 +9,7 @@ from rigger.core.config import build_config
 from rigger.core.ids import make_instrument_id
 from rigger.core.models import Instrument
 from rigger.core.plugin import discover_targets
+from rigger.plugins.data.yfinance import YFinanceData
 from rigger.plugins.markets.asx import ASXMarket
 from rigger.plugins.markets.us import USMarket
 from rigger.plugins.targets.tickers import (
@@ -249,6 +250,21 @@ def test_unknown_market_fails_loudly_naming_known_markets():
     )
     with pytest.raises(KeyError, match=r"known markets are asx, us"):
         rig._build_targets()
+
+
+def test_custom_market_builds_target_and_yahoo_symbol():
+    rig = _rig(
+        {
+            "markets": {"lse": {"label": "London Stock Exchange", "currency": "GBP", "yahoo_suffix": ".L"}},
+            "targets": {"hargreaves": {"kind": "company", "market": "lse", "tickers": ["HL"]}},
+        }
+    )
+    (instrument,) = rig.targets["hargreaves"].instruments()
+    assert (instrument.id, instrument.currency) == ("LSE:HL", "GBP")
+    feed = YFinanceData()
+    feed.configure({})
+    feed.set_market_suffixes({name: item.yahoo_suffix for name, item in rig.cfg.markets.items()})
+    assert feed.yf_symbol(instrument) == "HL.L"
 
 
 def test_unknown_kind_fails_loudly_naming_known_kinds():

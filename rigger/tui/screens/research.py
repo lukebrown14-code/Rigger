@@ -18,7 +18,7 @@ from textual.widgets import Button, Input, Markdown, MarkdownViewer, Static
 from textual.widgets._markdown import MarkdownBlock
 from textual.worker import Worker, get_current_worker
 
-from rigger import services, theses
+from rigger import review, services, theses
 from rigger.evidence import EvidenceItem, evidence, evidence_by_ids
 from rigger.llm.router import model_for
 from rigger.plugins.data.yfinance import DEFAULT_SUFFIXES
@@ -147,6 +147,7 @@ class Research(RiggerScreen):
     #research-companies { height: 1fr; width: 1fr; overflow-y: auto; }
     #research-actions { height: 1; margin: 0 1; }
     #research-actions .chip-gap { width: 1fr; height: 1; }
+    #research-audit { height: 1; margin: 0 1; color: $warning; text-wrap: nowrap; text-overflow: ellipsis; }
     #evidence-layout, #report-doc { height: 1fr; }
     #evidence-list-pane { width: 2fr; }
     #evidence-preview-pane { width: 3fr; }
@@ -205,6 +206,7 @@ class Research(RiggerScreen):
             yield ActionChip("u", "gather company", id="research-refresh")
             yield ActionChip("U", "gather all", id="research-gather")
             yield ActionChip("n", "generate report", id="report-generate", classes="-primary")
+        yield Static("", id="research-audit", markup=False)
         with PaneRow(id="evidence-layout"):
             with Pane(
                 title="evidence",
@@ -345,6 +347,7 @@ class Research(RiggerScreen):
             self.query_one(button, Button).disabled = self.state.busy
         self.detail_open = False
         await self.show_latest(self.state.company)
+        self.show_audit(self.state.company)
         self.load_evidence()
         if self.view.inspected:
             await self.inspect_evidence(self.view.inspected, save=False)
@@ -757,6 +760,23 @@ class Research(RiggerScreen):
                 ("—" if pct is None else f"{pct:+.2f}%", colour),
             )
             table.update_cell(company, "live", cell, update_width=True)
+
+    def show_audit(self, company: str) -> None:
+        """Surface evidence gaps without blocking research or asserting a conclusion."""
+        line = self.query_one("#research-audit", Static)
+        if not company:
+            line.update("")
+            return
+        try:
+            audit = review.evidence_audit(
+                self.rig.engine,
+                company,
+                primary_sources=review.primary_sources_for(self.rig, company),
+            )
+        except Exception:
+            line.update("")
+            return
+        line.update(" · ".join(audit.warnings))
 
     def reports_dir(self) -> Path:
         return Path(getattr(self.rig.cfg, "reports_dir", "reports"))

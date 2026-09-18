@@ -30,6 +30,7 @@ NAV_ITEMS: list[tuple[str, str, str]] = [
     ("2", "data", "Research"),
     ("4", "theses", "Theses"),
     ("5", "chat", "Ask"),
+    ("6", "decisions", "Decisions"),
 ]
 
 # Chrome actions, rendered flush-right on the status bar. Same 3-tuple shape as

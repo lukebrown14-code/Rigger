@@ -22,7 +22,18 @@ from rigger.core.time import parse_date, to_utc
 
 EvidenceKind = Literal["bar", "news", "filing", "fundamental", "event", "web", "note"]
 
+# ``FILING_SOURCE`` remains for compatibility with existing callers.  New
+# consumers should use the set: ASX announcements are primary disclosures too.
 FILING_SOURCE = "sec_edgar"
+PRIMARY_FILING_SOURCES = frozenset((FILING_SOURCE, "asx_announcements"))
+# Alias used by configurable-source consumers.  A source is primary only when
+# it is a recognised direct disclosure feed; installed RSS sources stay
+# secondary evidence.
+PRIMARY_DISCLOSURE_SOURCES = PRIMARY_FILING_SOURCES
+
+
+def source_quality(source: str) -> str:
+    return "primary" if source in PRIMARY_DISCLOSURE_SOURCES else "secondary"
 
 
 @dataclass
@@ -39,6 +50,7 @@ class EvidenceItem:
     url: str | None
     sentiment: float | None
     raw: dict[str, Any] = field(default_factory=dict)
+    quality: str = "secondary"
 
 
 def cite(item: EvidenceItem) -> str:
@@ -162,9 +174,9 @@ def _news(
     if since is not None:
         stmt = stmt.where(NewsItemTable.published >= parse_date(since))
     if kind == "news":
-        stmt = stmt.where(NewsItemTable.source != FILING_SOURCE)
+        stmt = stmt.where(NewsItemTable.source.not_in(PRIMARY_FILING_SOURCES))
     elif kind == "filing":
-        stmt = stmt.where(NewsItemTable.source == FILING_SOURCE)
+        stmt = stmt.where(NewsItemTable.source.in_(PRIMARY_FILING_SOURCES))
     stmt = stmt.order_by(NewsItemTable.published.desc(), NewsItemTable.id).limit(limit)  # type: ignore[attr-defined]
     return [_news_item(row) for row in session.exec(stmt).all()]
 
@@ -216,7 +228,7 @@ def _bar_item(row: BarTable) -> EvidenceItem:
 
 def _news_item(row: NewsItemTable) -> EvidenceItem:
     instrument_ids = from_json(row.instrument_ids)
-    kind: EvidenceKind = "filing" if row.source == FILING_SOURCE else "news"
+    kind: EvidenceKind = "filing" if row.source in PRIMARY_FILING_SOURCES else "news"
     return EvidenceItem(
         id=f"{kind}:{row.id}",
         target_ids=tuple(instrument_ids),
@@ -228,6 +240,7 @@ def _news_item(row: NewsItemTable) -> EvidenceItem:
         url=row.url,
         sentiment=None,
         raw={"instrument_ids": instrument_ids},
+        quality=source_quality(row.source),
     )
 
 

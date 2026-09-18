@@ -19,7 +19,7 @@ import httpx
 from rigger.core.http import user_agent
 from rigger.core.ids import stable_id
 from rigger.core.models import Bar, Event, Fundamental, Instrument, NewsItem
-from rigger.core.plugin import DataPlugin
+from rigger.core.plugin import DataPlugin, DataProviderField, DataProviderSpec
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +54,12 @@ FORM_LABELS = {
 class SECEdgar(DataPlugin):
     name = "sec_edgar"
     market = "us"
+    provider_spec = DataProviderSpec(
+        label="SEC EDGAR",
+        fields=(DataProviderField("contact", "Contact email", required=True, placeholder="you@example.com"),),
+        primary_disclosure=True,
+        notice="SEC requires a real contact address in the User-Agent.",
+    )
 
     def __init__(self) -> None:
         self.contact = "you@example.com"

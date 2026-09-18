@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
@@ -51,6 +52,103 @@ class ExtractResult:
     instruments: int
 
 
+@dataclass(frozen=True)
+class DataProviderStatus:
+    name: str
+    label: str
+    configured: bool
+    enabled: bool
+    primary_disclosure: bool
+    notice: str
+
+
+def data_provider_status(rig: Any) -> list[DataProviderStatus]:
+    """Configured data plugins that declare a safe setup contract."""
+    from rigger.core.config import read_env_value
+    from rigger.core.plugin import DataPlugin
+
+    result: list[DataProviderStatus] = []
+    for name, plugin in rig.plugins.items():
+        if not isinstance(plugin, DataPlugin) or plugin.provider_spec is None:
+            continue
+        spec = plugin.provider_spec
+        table = dict(getattr(rig.cfg, "plugins", {}).get(name, {}))
+        configured = all(
+            not item.required
+            or (
+                bool(read_env_value(item.env_var))
+                if item.secret and item.env_var
+                else bool(table.get(item.name))
+            )
+            for item in spec.fields
+        )
+        result.append(
+            DataProviderStatus(
+                name=name,
+                label=spec.label,
+                configured=configured,
+                enabled=bool(plugin.enabled),
+                primary_disclosure=spec.primary_disclosure,
+                notice=spec.notice,
+            )
+        )
+    return sorted(result, key=lambda item: item.label)
+
+
+def configure_data_provider(
+    rig: Any, name: str, values: dict[str, str], *, markets: list[str] | None = None
+) -> None:
+    """Persist adapter settings and activate the source.
+
+    A secret field must declare its fixed environment-variable name; it goes
+    to `.env`, never to `config.toml`.
+    """
+    import tomli_w
+
+    from rigger.core import config as config_mod
+    from rigger.core.plugin import DataPlugin
+
+    plugin = rig.plugins.get(name)
+    if not isinstance(plugin, DataPlugin) or plugin.provider_spec is None:
+        raise ValueError(f"unknown configurable data provider: {name}")
+    fields = {field.name: field for field in plugin.provider_spec.fields}
+    unknown = set(values) - set(fields)
+    if unknown:
+        raise ValueError(f"unknown settings for {name}: {', '.join(sorted(unknown))}")
+    for field_name, value in values.items():
+        field = fields[field_name]
+        if field.secret and value.strip() and not field.env_var:
+            raise ValueError(f"{field.label} has no declared environment variable")
+    raw = config_mod.load_toml()
+    if markets is not None:
+        known = set(market_profiles())
+        unknown_markets = set(markets) - known
+        if unknown_markets:
+            raise ValueError(f"unknown markets: {', '.join(sorted(unknown_markets))}")
+    table = raw.setdefault("plugins", {}).setdefault(name, {})
+    for field_name, value in values.items():
+        field = fields[field_name]
+        value = value.strip()
+        if field.secret:
+            if field.required and not value:
+                raise ValueError(f"{field.label} is required")
+            continue
+        if field.required and not value:
+            raise ValueError(f"{field.label} is required")
+        table[field_name] = value
+    if markets is not None:
+        table.setdefault("scope", {})["markets"] = markets
+    table["enabled"] = True
+    Path("config.toml").write_text(tomli_w.dumps(raw), encoding="utf-8")
+    for field_name, value in values.items():
+        field = fields[field_name]
+        if field.secret and value.strip():
+            config_mod.set_env_value(field.env_var, value.strip())
+    reload_sources = getattr(rig, "reload_data_sources", None)
+    if callable(reload_sources):
+        reload_sources()
+
+
 async def ingest(
     rig: Any,
     *,
@@ -68,12 +166,16 @@ async def ingest(
         wanted = set(tickers.split(","))
         instruments = [i for i in instruments if i.symbol in wanted]
     total: dict[str, int] = {}
+    from rigger.core.plugin import DataPlugin
+
     for name, plugin in rig.plugins.items():
         if not plugin.enabled or not hasattr(plugin, "fetch"):
             continue
         if plugin.market and market and plugin.market != market:
             continue
         target = [i for i in instruments if plugin.market is None or i.market == plugin.market]
+        if isinstance(plugin, DataPlugin):
+            target = plugin.scope.filter(target)
         if not target:
             continue
         log(f"Ingesting via [bold]{name}[/bold] ({len(target)} instruments)...")
@@ -119,6 +221,73 @@ def set_plugin_enabled(rig: Any, name: str, value: bool) -> None:
     Path("config.toml").write_text(tomli_w.dumps(raw), encoding="utf-8")
 
 
+_MARKET_ID = re.compile(r"^[a-z][a-z0-9_]*$")
+_CURRENCY = re.compile(r"^[A-Z]{3}$")
+
+
+def market_profiles() -> dict[str, Any]:
+    """All built-in and user-configured exchange profiles in the active TOML."""
+    from rigger.core import config as config_mod
+
+    return config_mod.build_config(config_mod.load_toml()).markets
+
+
+def save_market(name: str, *, label: str, currency: str, yahoo_suffix: str) -> None:
+    """Create or edit a config-backed exchange profile."""
+    import tomli_w
+
+    from rigger.core import config as config_mod
+
+    name = name.strip().lower()
+    currency = currency.strip().upper()
+    if not _MARKET_ID.fullmatch(name):
+        raise ValueError("market ID must use lowercase letters, numbers, or underscores")
+    if not label.strip():
+        raise ValueError("market name is required")
+    if not _CURRENCY.fullmatch(currency):
+        raise ValueError("currency must be a three-letter ISO code")
+    raw = config_mod.load_toml()
+    if name in {"us", "asx"} and name not in raw.get("markets", {}):
+        raise ValueError(f"{name} is built in and cannot be edited")
+    raw.setdefault("markets", {})[name] = {
+        "label": label.strip(),
+        "currency": currency,
+        "yahoo_suffix": yahoo_suffix.strip().upper(),
+    }
+    Path("config.toml").write_text(tomli_w.dumps(raw), encoding="utf-8")
+
+
+def remove_market(name: str) -> None:
+    """Remove a user-defined market when nothing still depends on it."""
+    import tomli_w
+
+    from rigger.core import config as config_mod
+
+    name = name.strip().lower()
+    raw = config_mod.load_toml()
+    if name not in raw.get("markets", {}):
+        raise ValueError("only user-defined markets can be removed")
+    targets = {
+        target_name
+        for section in ("targets", "watchlists")
+        for target_name, spec in raw.get(section, {}).items()
+        if str(spec.get("market", "")).lower() == name
+    }
+    sources: set[str] = set()
+    for source_name, spec in raw.get("plugins", {}).items():
+        scope = spec.get("scope", {})
+        values = scope.get("markets", []) if isinstance(scope, dict) else []
+        if isinstance(values, str):
+            values = [values]
+        if name in {str(item).lower() for item in values}:
+            sources.add(str(source_name))
+    if targets or sources:
+        used_by = sorted(targets | sources)
+        raise ValueError(f"{name} is still used by: {', '.join(used_by)}")
+    del raw["markets"][name]
+    Path("config.toml").write_text(tomli_w.dumps(raw), encoding="utf-8")
+
+
 def target_specs() -> dict[str, WatchTarget]:
     """User-facing watch targets from [targets] and legacy [watchlists] tables.
 
@@ -151,18 +320,13 @@ def add_target(
     import tomli_w
 
     from rigger.core import config as config_mod
-    from rigger.core.plugin import MarketPlugin, discover_plugins
 
     kind = kind.lower()
     if kind not in KNOWN_KINDS:
         raise ValueError(
             f"target {name!r} names unknown kind {kind!r}; known kinds are {', '.join(KNOWN_KINDS)}"
         )
-    known = sorted(
-        plugin_name
-        for plugin_name, plugin in discover_plugins().items()
-        if isinstance(plugin, MarketPlugin)
-    )
+    known = sorted(market_profiles())
     market = market.lower()
     if market not in known:
         raise ValueError(
